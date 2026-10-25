@@ -66,11 +66,22 @@
     <section class="card" aria-labelledby="season-h">
       <h2 id="season-h">Season</h2>
       <p id="season-line" class="muted">Looking for the live season…</p>
+      <p id="season-clock" class="clock" hidden></p>
+      <p id="standing" class="standing" hidden></p>
       <div id="join-box" hidden>
         <p id="join-line" class="muted small-text"></p>
         <button id="join" type="button">Join the season</button>
       </div>
+      <p id="last-result" class="standing last-result" hidden></p>
+      <div id="ended-orders-box" class="ended" hidden>
+        <p id="ended-note" class="muted small-text"></p>
+        <ul id="ended-orders" class="games"></ul>
+      </div>
       <p id="season-msg" class="msg" role="status" hidden></p>
+      <div id="alert-opt" class="alert-opt" hidden>
+        <label><input id="alert-toggle" type="checkbox"> Tell me when an order fills</label>
+        <p id="alert-note" class="note" role="status" hidden></p>
+      </div>
       <p class="muted small-text"><a id="board-link" href="/market">Leaderboard and every season</a></p>
     </section>
 
@@ -98,6 +109,10 @@
       <h2 id="mine-h">Your open orders</h2>
       <ul id="orders" class="games"><li class="muted">None.</li></ul>
       <p id="orders-msg" class="msg" role="status" hidden></p>
+      <div id="fills-box" class="fills" aria-live="polite" hidden>
+        <h3>Filled since you opened this page</h3>
+        <ul id="fills" class="fill-list"></ul>
+      </div>
     </section>
 
     <section class="card" id="book-card" aria-labelledby="book-h" hidden>
@@ -136,6 +151,8 @@
             the book until it fills or you cancel it. A buy locks its S<em>n</em>GOLD while it rests; cancelling returns it.</li>
           <li>Orders that would trade with your own resting order are refused. At most 100 open orders per address.</li>
           <li>Trading is open from the season's start block to its end block. The leaderboard values what you hold at the last trade price.</li>
+          <li>When the season ends, an order still resting can no longer fill. It stays on the book with what it holds,
+            and still counts in your value, until you cancel it; a cancel works after the end and returns it to you.</li>
         </ul>
       </details>
     </section>

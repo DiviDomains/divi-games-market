@@ -1,0 +1,9 @@
+# docker compose up --build    then open http://localhost:8084/play/market/
+# docker compose down           to stop it
+services:
+  market:
+    build: .
+    # Only this computer can open it. To let your home network in too, make it "8084:8084".
+    ports:
+      - "127.0.0.1:8084:8084"
+    restart: unless-stopped

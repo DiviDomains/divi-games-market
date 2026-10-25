@@ -2,6 +2,17 @@
 
 .wallet-bal strong + span { margin-right: 10px; }
 
+.standing { font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
+.clock { margin: 4px 0 8px; font-size: 0.9rem; color: var(--text-2); overflow-wrap: anywhere; }
+.last-result { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.ended p { overflow-wrap: anywhere; }
+.alert-opt { margin: 8px 0; font-size: 0.85rem; color: var(--text-2); }
+.alert-opt label { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.alert-opt input { width: auto; margin: 0; }
+.alert-opt .note { margin: 4px 0 0; font-size: 0.8rem; }
+.fills h3 { margin-top: 12px; }
+.fill-list { margin: 0; padding-left: 20px; color: var(--text-2); font-size: 0.875rem; line-height: 1.5; overflow-wrap: anywhere; }
+
 .order-form { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 10px; align-items: end; }
 @media (max-width: 640px) { .order-form { grid-template-columns: 1fr 1fr; } .order-form .side, .order-form button { grid-column: 1 / -1; } }
 .side { display: flex; gap: 6px; border: 0; padding: 0; margin: 0; }

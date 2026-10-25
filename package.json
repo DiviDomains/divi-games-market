@@ -1,0 +1,16 @@
+{
+  "name": "divi-games-market",
+  "private": true,
+  "description": "Join the live trading season, then buy and sell its DIVI for its GOLD on an order book against the house market maker and other players.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "config": {
+    "port": 8084
+  },
+  "scripts": {
+    "start": "node serve.mjs --open"
+  }
+}

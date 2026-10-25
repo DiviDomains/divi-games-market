@@ -9,9 +9,12 @@
 // send only game and faucet actions, never market ones. So the page always signs with the play key.
 
 import { Chain, Key, NETWORK, readableError, setTextWithLinks } from '../../sdk/divigames.js';
-import { liveSeason, nextSeason, pairOf, canJoin, buildOrder, cancelAction, joinAction, orderId, priceText, unitsText, GOLD_DECIMALS, DIVI_DECIMALS } from './market.js';
+import { liveSeason, pairOf, canJoin, buildOrder, cancelAction, joinAction, orderId, priceText, unitsText, GOLD_DECIMALS, DIVI_DECIMALS } from './market.js';
+import { BASE_TITLE, standing, standingText, trackFills, fillAlert, fillText, shouldNotify, notifyPlan } from './standing.js';
+import { seasonClock, clockText, justLeft, resultText, restingText } from './season-end.js';
 
 const KEY_STORE = 'dg.playkey.wif';
+const ALERT_STORE = 'dg.market-alerts';
 /** Refresh this often even without a block message, so a closed socket never leaves the book stale. */
 const POLL_MS = 5000;
 
@@ -23,7 +26,6 @@ const state = {
   /** @type {Key} */ key: loadKey(),
   me: '',
   height: 0,
-  /** The season that opens next, or null. @type {any} */ next: null,
   /** The live season from `view=seasons`, or null. @type {any} */ season: null,
   base: '',
   quote: '',
@@ -33,7 +35,25 @@ const state = {
   /** @type {bigint|null} */ divi: null,
   /** This address's open orders in the season pair. @type {any[]} */ orders: [],
   /** Whether this address is on the season's leaderboard (it has joined). @type {boolean|null} */ member: null,
+  /** Where this address stands in the season, from `view=season`. @type {ReturnType<typeof standing>} */ standing: null,
+  /**
+   * Fill alerts: what the last look saw (trackFills), for which address and season, whether notifications are on,
+   * and the fills seen since the page opened, newest first.
+   */
+  alert: { /** @type {any} */ watch: null, for: '', notify: false, /** @type {any[]} */ fills: [] },
   /** @type {Map<string, number>} */ decimals: new Map(),
+  /** Blocks left in the live season and the season queued next (season-end.js). @type {ReturnType<typeof seasonClock>|null} */
+  clock: null,
+  /**
+   * The season this address just left (season-end.js): for which address, the `view=season&n=` replies of ended
+   * seasons read so far, what this address holds (all balances and open orders), and the result.
+   */
+  ended: {
+    for: '',
+    /** @type {Map<number, any>} */ views: new Map(),
+    /** @type {{balances: Record<string, string>, orders: any[]}|undefined} */ own: undefined,
+    /** @type {import('./season-end.js').Result|null} */ result: null,
+  },
 };
 state.me = state.key.address;
 
@@ -87,16 +107,16 @@ const errText = (/** @type {any} */ e) => (e && e.message) || String(e);
 
 // ---------- the play key ----------
 
-function storageGet() {
+function storageGet(key = KEY_STORE) {
   try {
-    return localStorage.getItem(KEY_STORE);
+    return localStorage.getItem(key);
   } catch {
     return null;
   }
 }
-function storageSet(/** @type {string} */ wif) {
+function storageSet(/** @type {string} */ value, key = KEY_STORE) {
   try {
-    localStorage.setItem(KEY_STORE, wif);
+    localStorage.setItem(key, value);
     return true;
   } catch {
     return false;
@@ -127,6 +147,13 @@ function balanceOf(/** @type {any} */ account, /** @type {string} */ token) {
   }
   if (b && typeof b === 'object') return String(b[token] ?? '0');
   return '0';
+}
+
+/** Every balance from an account response, as {SYM: "n"}. */
+function balancesOf(/** @type {any} */ account) {
+  const b = account?.balances ?? account?.balance;
+  if (Array.isArray(b)) return Object.fromEntries(b.map((r) => [String(r.token ?? r.symbol), String(r.amount ?? r.balance ?? '0')]));
+  return b && typeof b === 'object' ? Object.fromEntries(Object.entries(b).map(([k, v]) => [k, String(v ?? '0')])) : {};
 }
 
 /** A list from a view that may wrap it: `{key: [...]}` or `[...]`. */
@@ -217,7 +244,7 @@ $('import').addEventListener('submit', (ev) => {
     input.value = '';
     showKey();
     say(msg, saved ? 'Key imported.' : 'Key imported for this visit only: this browser would not save it.', saved ? 'ok' : 'info');
-    Object.assign(state, { gold: null, divi: null, orders: [], member: null });
+    Object.assign(state, { gold: null, divi: null, orders: [], member: null, standing: null });
     refreshAll();
   } catch (e) {
     say(msg, `Not a valid WIF: ${errText(e)}`, 'error');
@@ -267,33 +294,63 @@ async function refreshOnce() {
     return;
   }
   if (Number.isFinite(Number(info?.height))) state.height = Number(info.height);
-  const season = liveSeason(listOf(seasons, 'seasons'), state.height);
+  const list = listOf(seasons, 'seasons');
+  const season = liveSeason(list, state.height);
   const changed = Number(season?.season) !== Number(state.season?.season);
   state.season = season;
-  state.next = nextSeason(listOf(seasons, 'seasons'), state.height);
+  state.clock = seasonClock(list, state.height);
+  // The season just left: one season view a look, either the next ended season to check or the one you were in.
+  const ended = state.ended;
+  if (ended.for !== state.me) Object.assign(ended, { for: state.me, views: new Map(), own: undefined, result: null });
+  const step = justLeft(list, state.height, ended.views, state.me, ended.own);
+  const endedN = step && 'need' in step ? step.need : step?.result.season.season;
+  const endedView = endedN == null ? Promise.resolve(null) : chain.game('market', { view: 'season', n: endedN }).catch(() => null);
+  const keepEnded = (/** @type {any} */ acct, /** @type {any} */ mine, /** @type {any} */ v) => {
+    if (ended.for !== state.me) return; // another key was imported meanwhile
+    if (acct && mine) ended.own = { balances: balancesOf(acct), orders: listOf(mine, 'orders') };
+    if (v && endedN != null) ended.views.set(Number(endedN), v);
+    const now = justLeft(list, state.height, ended.views, state.me, ended.own);
+    // While a newer ended season is still to be read, the last result stays up rather than blink out.
+    if (!now) ended.result = null;
+    else if ('result' in now) ended.result = now.result;
+  };
   if (!season) {
-    Object.assign(state, { base: '', quote: '', gold: null, divi: null, orders: [], member: null });
+    Object.assign(state, { base: '', quote: '', gold: null, divi: null, orders: [], member: null, standing: null });
+    const [acct, mine, v] = await Promise.all([
+      chain.account(state.me).catch(() => null),
+      chain.game('market', { view: 'orders', owner: state.me }).catch(() => null),
+      endedView,
+    ]);
+    keepEnded(acct, mine, v);
     render();
     return;
   }
   ({ base: state.base, quote: state.quote } = pairOf(season));
-  if (changed) Object.assign(state, { gold: null, divi: null, orders: [], member: null });
+  if (changed) Object.assign(state, { gold: null, divi: null, orders: [], member: null, standing: null });
   state.goldDecimals = state.decimals.get(state.quote) ?? GOLD_DECIMALS;
   state.diviDecimals = state.decimals.get(state.base) ?? DIVI_DECIMALS;
   const pair = { base: state.base, quote: state.quote };
-  const [acct, mine, book, trades, board] = await Promise.all([
+  const [acct, mine, book, trades, board, v] = await Promise.all([
     chain.account(state.me).catch(() => null),
     chain.game('market', { view: 'orders', owner: state.me }).catch(() => null),
     chain.game('market', { view: 'book', ...pair }).catch(() => null),
     chain.game('market', { view: 'trades', ...pair, limit: 20 }).catch(() => null),
     chain.game('market', { view: 'season', n: season.season }).catch(() => null),
+    endedView,
   ]);
+  keepEnded(acct, mine, v);
   if (acct) {
     state.gold = BigInt(balanceOf(acct, state.quote));
     state.divi = BigInt(balanceOf(acct, state.base));
   }
   if (mine) state.orders = listOf(mine, 'orders').filter((o) => o.base === state.base && o.quote === state.quote);
-  if (board) state.member = listOf(board, 'leaderboard').some((r) => r.address === state.me);
+  if (board) {
+    const own = state.gold != null && state.divi != null ? { gold: state.gold, divi: state.divi, orders: state.orders } : undefined;
+    state.standing = standing(board, state.me, own);
+    // A member below the top 100 is not on the leaderboard, but has a standing the page valued itself.
+    state.member = state.standing != null || listOf(board, 'leaderboard').some((r) => r.address === state.me);
+  }
+  if (mine && trades) watchFills(listOf(trades, 'trades'));
   render();
   if (book) renderBook(book);
   if (trades) renderTrades(listOf(trades, 'trades'));
@@ -305,9 +362,15 @@ function render() {
   const s = state.season;
   for (const id of ['trade', 'mine', 'book-card', 'trades-card']) $(id).hidden = !s;
   $('join-box').hidden = true;
+  const st = s && state.standing;
+  $('standing').hidden = !st;
+  $('standing').textContent = st ? standingText(st, fmt()) : '';
+  const clock = state.clock ? clockText(state.clock) : '';
+  $('season-clock').hidden = !clock;
+  $('season-clock').textContent = clock;
+  renderEnded();
   if (!s) {
     $('season-line').textContent = `No season is trading at block ${state.height}. A season trades only between its start and end blocks; the list of seasons is on the market page.`;
-    if (state.next) $('season-line').textContent += ` Season ${state.next.season} opens at height ${state.next.start_height}.`;
     $('bal-gold').textContent = '–';
     $('bal-divi').textContent = '–';
     return;
@@ -349,22 +412,43 @@ function renderOrders() {
     list.append(el('li', { class: 'muted' }, 'None.'));
     return;
   }
-  for (const o of [...state.orders].sort((a, b) => Number(b.seq) - Number(a.seq))) {
-    const btn = /** @type {HTMLButtonElement} */ (el('button', { class: 'ghost small', type: 'button' }, 'Cancel'));
-    btn.addEventListener('click', async () => {
-      const r = await run(cancelAction(o.id), $('orders-msg'), [btn]);
-      if (r) say($('orders-msg'), `Order ${o.id} cancelled.`, 'ok');
-    });
-    const left = o.remaining !== o.amount ? ` (${diviText(o.remaining)} left)` : '';
-    list.append(
-      el('li', {},
-        el('div', { class: 'info' },
-          el('span', { class: `side-tag ${o.side}` }, o.side === 'buy' ? 'Buy' : 'Sell'), ' ',
-          `${diviText(o.amount)} ${state.base} at ${priceOf(o.price)} ${state.quote}${left}`,
-          el('div', { class: 'sub' }, `Order ${o.id} · block ${o.height}${o.side === 'buy' ? ` · ${goldText(o.locked)} ${state.quote} locked` : ''}`)),
-        el('div', { class: 'btns' }, btn)),
-    );
-  }
+  for (const o of [...state.orders].sort((a, b) => Number(b.seq) - Number(a.seq))) list.append(orderItem(o, fmt(), $('orders-msg')));
+}
+
+/** One open order with its Cancel button, in the pair and decimals of `f`; the outcome of a cancel goes to `msg`. */
+function orderItem(/** @type {any} */ o, /** @type {ReturnType<typeof fmt>} */ f, /** @type {HTMLElement} */ msg) {
+  const d = (/** @type {any} */ u) => safe(() => unitsText(String(u ?? '0'), f.diviDecimals));
+  const g = (/** @type {any} */ u) => safe(() => unitsText(String(u ?? '0'), f.goldDecimals));
+  const btn = /** @type {HTMLButtonElement} */ (el('button', { class: 'ghost small', type: 'button' }, 'Cancel'));
+  btn.addEventListener('click', async () => {
+    const r = await run(cancelAction(o.id), msg, [btn]);
+    if (r) say(msg, `Order ${o.id} cancelled.`, 'ok');
+  });
+  const left = o.remaining !== o.amount ? ` (${d(o.remaining)} left)` : '';
+  return el('li', {},
+    el('div', { class: 'info' },
+      el('span', { class: `side-tag ${o.side}` }, o.side === 'buy' ? 'Buy' : 'Sell'), ' ',
+      `${d(o.amount)} ${f.base} at ${safe(() => priceText(String(o.price ?? '0'), f.goldDecimals))} ${f.quote}${left}`,
+      el('div', { class: 'sub' }, `Order ${o.id} · block ${o.height}${o.side === 'buy' ? ` · ${g(o.locked)} ${f.quote} locked` : ''}`)),
+    el('div', { class: 'btns' }, btn));
+}
+
+/** The pair and decimals of season `s`, as `fmt()` gives them for the live one. */
+const fmtOf = (/** @type {any} */ s) => {
+  const { base, quote } = pairOf(s);
+  return { base, quote, goldDecimals: state.decimals.get(quote) ?? GOLD_DECIMALS, diviDecimals: state.decimals.get(base) ?? DIVI_DECIMALS };
+};
+
+/** The season you just left: your result, and the orders that were still resting when it ended, with their cancels. */
+function renderEnded() {
+  const r = state.ended.for === state.me ? state.ended.result : null;
+  const f = r ? fmtOf(r.season) : null;
+  $('last-result').hidden = !r;
+  $('last-result').textContent = r && f ? resultText(r, f) : '';
+  const resting = r && f && r.resting.length ? r.resting : [];
+  $('ended-orders-box').hidden = !resting.length;
+  $('ended-note').textContent = r && f && resting.length ? restingText(r, f) : '';
+  $('ended-orders').replaceChildren(...(f ? [...resting].sort((a, b) => Number(b.seq) - Number(a.seq)).map((o) => orderItem(o, f, $('season-msg'))) : []));
 }
 
 /** Fill a book side, best price first as the chain lists it. */
@@ -412,6 +496,100 @@ function renderTrades(/** @type {any[]} */ trades) {
       el('td', {}, diviText(t.amount)),
       el('td', { class: 'muted' }, mine ? (t.taker === state.me ? 'you took' : 'you made') : `${who(t.taker)} ← ${who(t.maker)}`)));
   }
+}
+
+// ---------- fills ----------
+//
+// A resting order fills in a later block, often while the player is in another tab. Each look at the chain compares the
+// trades the page already reads with the last look (standing.js): a new trade with this address as the maker is one of
+// its orders filling. The fill goes in the list under "Your open orders" and in the tab title, and, if the player asked
+// for it, a local `new Notification(...)` while the tab is hidden. No request beyond the views the page already makes.
+
+const fmt = () => ({ base: state.base, quote: state.quote, goldDecimals: state.goldDecimals, diviDecimals: state.diviDecimals });
+
+/** Compare this look's open orders and trades with the last look's, and tell the player about any fill. */
+function watchFills(/** @type {any[]} */ trades) {
+  const key = `${state.me}|${state.season?.season}`;
+  if (state.alert.for !== key) { // another key or season: start afresh
+    Object.assign(state.alert, { for: key, watch: null, fills: [] });
+    renderFills();
+  }
+  const prev = state.alert.watch;
+  const { next, fills } = trackFills(prev, { orders: state.orders, trades, me: state.me });
+  state.alert.watch = next;
+  if (!fills.length) return;
+  const f = fmt();
+  state.alert.fills.unshift(...fills.map((x) => ({ height: x.height, text: fillText(x, f) })).reverse());
+  state.alert.fills.length = Math.min(state.alert.fills.length, 50);
+  renderFills();
+  const a = fillAlert(fills, f);
+  document.title = a.title;
+  if (shouldNotify(prev, fills) && state.alert.notify && document.hidden) notifyNow(a.text, fills[0].seq);
+}
+
+function renderFills() {
+  const rows = state.alert.fills;
+  $('fills-box').hidden = !rows.length;
+  $('fills').replaceChildren(...rows.map((r) => el('li', {}, `Block ${r.height}: ${r.text}`)));
+}
+
+/** The player has seen the page again: the title goes back to the base title (the fills list stays). */
+function seen() {
+  if (document.title !== BASE_TITLE) document.title = BASE_TITLE;
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden) seen(); });
+document.addEventListener('pointerdown', seen);
+document.addEventListener('keydown', seen);
+
+function notifyNow(/** @type {string} */ text, /** @type {number} */ seq) {
+  try {
+    new Notification('DiviGames · market', { body: text, tag: `dg-market-${seq}` });
+  } catch {
+    /* the browser refused; the title still shows it */
+  }
+}
+
+/** What this browser can do with notifications right now. */
+function notifySupport() {
+  const N = /** @type {any} */ (window).Notification;
+  return { supported: typeof N === 'function', permission: typeof N === 'function' ? String(N.permission) : 'denied' };
+}
+
+const WHEN = 'an order fills';
+
+/** Show the outcome of a toggle plan: the box, the note, and whether notifications are on. */
+function applyNotifyPlan(/** @type {ReturnType<typeof notifyPlan>} */ plan) {
+  state.alert.notify = plan.on;
+  /** @type {HTMLInputElement} */ ($('alert-toggle')).checked = plan.on;
+  $('alert-note').textContent = plan.note;
+  $('alert-note').hidden = !plan.note;
+}
+
+$('alert-toggle').addEventListener('change', async (ev) => {
+  const box = /** @type {HTMLInputElement} */ (ev.currentTarget);
+  const wanted = box.checked;
+  let plan = notifyPlan({ ...notifySupport(), wanted, when: WHEN });
+  if (plan.ask) {
+    box.disabled = true;
+    let permission = 'default';
+    try {
+      permission = String(await /** @type {any} */ (window).Notification.requestPermission());
+    } catch {
+      /* treated as not granted */
+    }
+    box.disabled = false;
+    plan = notifyPlan({ supported: true, permission, wanted, when: WHEN });
+    if (!plan.on && !plan.note) plan.note = 'Notifications were not allowed, so none will be shown. The tab title still shows when an order fills.';
+  }
+  applyNotifyPlan(plan);
+  storageSet(plan.on ? '1' : '0', ALERT_STORE);
+});
+
+// Offer the toggle only where the browser has notifications, and restore the saved choice without asking for permission.
+{
+  $('alert-opt').hidden = !notifySupport().supported;
+  const plan = notifyPlan({ ...notifySupport(), wanted: storageGet(ALERT_STORE) === '1', when: WHEN });
+  applyNotifyPlan(plan.ask ? { ask: false, on: false, note: '' } : plan);
 }
 
 // ---------- the order form ----------
