@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0f0f1a">
+  <title>Season market · DiviGames</title>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/static/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="../brand.css">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="/play/" title="All DiviGames">
+      <span class="logo-icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 2L2 7v10c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V7l-10-5zm0 18.5c-3.86-.95-6.5-4.95-6.5-8.5V8.3l6.5-3.25 6.5 3.25V12c0 3.55-2.64 7.55-6.5 8.5z"/></svg></span>
+      <span class="logo-text">DiviGames</span>
+      <span class="logo-page">Market</span>
+    </a>
+    <span class="spacer"></span>
+    <span class="net-badge" title="Testnet: season tokens here have no value">Testnet</span>
+    <span id="conn" class="conn" data-state="off" title="Chain connection">offline</span>
+  </header>
+
+  <section class="card wallet" aria-labelledby="wallet-h">
+    <h2 id="wallet-h" class="visually-hidden">Your play key</h2>
+    <div class="wallet-row">
+      <div class="wallet-id">
+        <span class="label">You</span>
+        <code id="me" class="addr">…</code>
+        <button id="copy-addr" class="ghost small" type="button">Copy</button>
+      </div>
+      <div class="wallet-bal">
+        <span class="label">Season balances</span>
+        <strong id="bal-gold">…</strong> <span id="sym-gold">S?GOLD</span>
+        <strong id="bal-divi">…</strong> <span id="sym-divi">S?DIVI</span>
+      </div>
+    </div>
+    <p id="wallet-msg" class="msg" role="status" hidden></p>
+    <details class="keybox">
+      <summary>Play key</summary>
+      <p class="note">This is a <strong>testnet play key</strong>, made in this browser and kept in its storage: the same
+        key the other games here use. Season tokens have no value. Export it to trade from another device, or import one you already have.</p>
+      <p class="note">The market trades with this play key, not with a connected IronDivi wallet: the chain lets a wallet's
+        session key play games and use the faucet, but not place or cancel orders.</p>
+      <div class="keyrow">
+        <button id="export" class="ghost" type="button">Show WIF</button>
+        <code id="wif" class="wif" hidden></code>
+      </div>
+      <form id="import" class="keyrow">
+        <label for="import-wif" class="visually-hidden">WIF to import</label>
+        <input id="import-wif" name="wif" autocomplete="off" spellcheck="false" placeholder="Paste a testnet WIF (starts with c)">
+        <button type="submit" class="ghost">Import</button>
+      </form>
+      <p id="key-msg" class="msg" role="status" hidden></p>
+    </details>
+  </section>
+
+  <main>
+    <section class="card" aria-labelledby="season-h">
+      <h2 id="season-h">Season</h2>
+      <p id="season-line" class="muted">Looking for the live season…</p>
+      <div id="join-box" hidden>
+        <p id="join-line" class="muted small-text"></p>
+        <button id="join" type="button">Join the season</button>
+      </div>
+      <p id="season-msg" class="msg" role="status" hidden></p>
+      <p class="muted small-text"><a id="board-link" href="/market">Leaderboard and every season</a></p>
+    </section>
+
+    <section class="card" id="trade" aria-labelledby="trade-h" hidden>
+      <h2 id="trade-h">Place an order</h2>
+      <form id="order-form" class="order-form">
+        <fieldset class="side">
+          <legend class="visually-hidden">Side</legend>
+          <label class="side-opt"><input type="radio" name="side" value="buy" checked> Buy</label>
+          <label class="side-opt"><input type="radio" name="side" value="sell"> Sell</label>
+        </fieldset>
+        <label>Price <span class="muted">(<span class="sym-gold">S?GOLD</span> per <span class="sym-divi">S?DIVI</span>)</span>
+          <input name="price" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="1.00">
+        </label>
+        <label>Amount <span class="muted">(<span class="sym-divi">S?DIVI</span>)</span>
+          <input name="amount" inputmode="decimal" autocomplete="off" spellcheck="false" placeholder="1">
+        </label>
+        <button type="submit" id="place">Place order</button>
+      </form>
+      <p id="order-note" class="muted small-text"></p>
+      <p id="order-msg" class="msg" role="status" hidden></p>
+    </section>
+
+    <section class="card" id="mine" aria-labelledby="mine-h" hidden>
+      <h2 id="mine-h">Your open orders</h2>
+      <ul id="orders" class="games"><li class="muted">None.</li></ul>
+      <p id="orders-msg" class="msg" role="status" hidden></p>
+    </section>
+
+    <section class="card" id="book-card" aria-labelledby="book-h" hidden>
+      <h2 id="book-h">Order book <span id="last" class="muted small-text"></span></h2>
+      <div class="book">
+        <table>
+          <caption>Bids (buyers)</caption>
+          <thead><tr><th>Price</th><th>Amount</th><th>Orders</th></tr></thead>
+          <tbody id="bids"></tbody>
+        </table>
+        <table>
+          <caption>Asks (sellers)</caption>
+          <thead><tr><th>Price</th><th>Amount</th><th>Orders</th></tr></thead>
+          <tbody id="asks"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card" id="trades-card" aria-labelledby="trades-h" hidden>
+      <h2 id="trades-h">Recent trades</h2>
+      <table class="trades">
+        <thead><tr><th>Block</th><th>Side</th><th>Price</th><th>Amount</th><th></th></tr></thead>
+        <tbody id="trades"></tbody>
+      </table>
+    </section>
+
+    <section class="card">
+      <details class="rules">
+        <summary>How the season market works</summary>
+        <ul>
+          <li>Each season has its own two tokens, S<em>n</em>GOLD and S<em>n</em>DIVI. Joining gives you the season's
+            starting balance of both; you can join each season once, with an address that holds none of its tokens.</li>
+          <li>A buy offers S<em>n</em>GOLD for S<em>n</em>DIVI at your price or better; a sell offers S<em>n</em>DIVI.
+            Price is in whole S<em>n</em>GOLD per whole S<em>n</em>DIVI, with up to 8 decimals.</li>
+          <li>An order that meets the other side trades at once at the resting order's price; whatever is left rests on
+            the book until it fills or you cancel it. A buy locks its S<em>n</em>GOLD while it rests; cancelling returns it.</li>
+          <li>Orders that would trade with your own resting order are refused. At most 100 open orders per address.</li>
+          <li>Trading is open from the season's start block to its end block. The leaderboard values what you hold at the last trade price.</li>
+        </ul>
+      </details>
+    </section>
+  </main>
+
+  <footer class="muted small-text">Chain: <code id="chain-url"></code></footer>
+</body>
+</html>

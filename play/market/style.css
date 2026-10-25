@@ -1,0 +1,33 @@
+/* Season market: the order form, the book and the trades. Everything shared with the games is in ../brand.css. */
+
+.wallet-bal strong + span { margin-right: 10px; }
+
+.order-form { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 10px; align-items: end; }
+@media (max-width: 640px) { .order-form { grid-template-columns: 1fr 1fr; } .order-form .side, .order-form button { grid-column: 1 / -1; } }
+.side { display: flex; gap: 6px; border: 0; padding: 0; margin: 0; }
+.side-opt {
+  display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--line); cursor: pointer; font-weight: 600; color: var(--text-2);
+}
+.side-opt input { width: auto; margin: 0; }
+.side-opt:has(input:checked) { border-color: var(--accent-border); background: var(--accent-soft); color: var(--accent-ink); }
+
+.side-tag { font-weight: 700; }
+.side-tag.buy { color: var(--ok-text); }
+.side-tag.sell { color: var(--err-text); }
+
+.book { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+@media (max-width: 520px) { .book { grid-template-columns: 1fr; } }
+.book table, table.trades { width: 100%; border-collapse: collapse; font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.book caption { text-align: left; font-weight: 600; color: var(--text); padding-bottom: 6px; }
+.book th, .book td, .trades th, .trades td { text-align: right; padding: 4px 6px; border-top: 1px solid var(--line-soft); }
+.book th:first-child, .book td:first-child, .trades th:first-child, .trades td:first-child { text-align: left; }
+.book th, .trades th { color: var(--muted); font-weight: 600; }
+.lvl { cursor: pointer; }
+.lvl:hover td { background: rgba(255, 255, 255, 0.04); }
+.lvl.bid td:first-child { color: var(--ok-text); }
+.lvl.ask td:first-child { color: var(--err-text); }
+.trades tr.you td { background: var(--accent-soft); }
+
+details.rules summary { cursor: pointer; font-weight: 600; color: var(--text); }
+details.rules ul { margin: 8px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.5; }
