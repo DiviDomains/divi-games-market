@@ -8,7 +8,7 @@
 // page does not mount the IronDivi wallets: a wallet plays through a session key, and the chain lets a session key
 // send only game and faucet actions, never market ones. So the page always signs with the play key.
 
-import { Chain, Key, NETWORK, readableError, setTextWithLinks } from '../../sdk/divigames.js';
+import { Chain, Key, NETWORK, readableError, setTextWithLinks, siteUrl } from '../../sdk/divigames.js';
 import { liveSeason, pairOf, canJoin, buildOrder, cancelAction, joinAction, orderId, priceText, unitsText, GOLD_DECIMALS, DIVI_DECIMALS } from './market.js';
 import { BASE_TITLE, standing, standingText, trackFills, fillAlert, fillText, shouldNotify, notifyPlan } from './standing.js';
 import { seasonClock, clockText, justLeft, resultText, restingText } from './season-end.js';
@@ -377,7 +377,7 @@ function render() {
   }
   const n = s.season;
   $('season-line').textContent = `Season ${n} is trading ${state.base} against ${state.quote} from block ${s.start_height} to block ${s.end_height} (now ${state.height}).`;
-  $('board-link').setAttribute('href', `/market?season=${encodeURIComponent(n)}`);
+  $('board-link').setAttribute('href', siteUrl(`/market?season=${encodeURIComponent(n)}`));
   $('board-link').textContent = `Season ${n} leaderboard`;
   $('sym-gold').textContent = state.quote;
   $('sym-divi').textContent = state.base;
