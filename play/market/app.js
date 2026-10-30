@@ -9,8 +9,8 @@
 // send only game and faucet actions, never market ones. So the page always signs with the play key.
 
 import { Chain, Key, NETWORK, readableError, setTextWithLinks, siteUrl } from '../../sdk/divigames.js';
-import { liveSeason, pairOf, canJoin, buildOrder, cancelAction, joinAction, orderId, priceText, unitsText, GOLD_DECIMALS, DIVI_DECIMALS } from './market.js';
-import { BASE_TITLE, standing, standingText, trackFills, fillAlert, fillText, shouldNotify, notifyPlan } from './standing.js';
+import { liveSeason, pairOf, canJoin, buildOrder, cancelAction, joinAction, priceText, unitsText, GOLD_DECIMALS, DIVI_DECIMALS } from './market.js';
+import { BASE_TITLE, standing, standingText, trackFills, fillAlert, fillText, shouldNotify, notifyPlan, placedText } from './standing.js';
 import { seasonClock, clockText, justLeft, resultText, restingText } from './season-end.js';
 
 const KEY_STORE = 'dg.playkey.wif';
@@ -91,7 +91,10 @@ const priceOf = (/** @type {any} */ wire) => safe(() => priceText(String(wire ??
 
 const clearTimers = new WeakMap();
 
-/** Show a status line under a control. Success notes fade after a few seconds; errors stay until replaced. */
+/**
+ * Show a status line under a control. Success notes (`ok`) fade after a few seconds; errors stay until replaced, and so
+ * does `filled`, an order's note that it traded: the player's confirmation, styled as a success.
+ */
 function say(/** @type {HTMLElement} */ node, text = '', kind = 'info') {
   clearTimeout(clearTimers.get(node));
   text = readableError(text);
@@ -494,7 +497,7 @@ function renderTrades(/** @type {any[]} */ trades) {
       el('td', { class: `side-tag ${t.taker_side}` }, t.taker_side === 'buy' ? 'Buy' : 'Sell'),
       el('td', {}, priceOf(t.price)),
       el('td', {}, diviText(t.amount)),
-      el('td', { class: 'muted' }, mine ? (t.taker === state.me ? 'you took' : 'you made') : `${who(t.taker)} ← ${who(t.maker)}`)));
+      el('td', { class: 'muted who' }, mine ? (t.taker === state.me ? 'you took' : 'you made') : `${who(t.taker)} ← ${who(t.maker)}`)));
   }
 }
 
@@ -622,7 +625,12 @@ function orderNote() {
   }
 }
 
-$('order-form').addEventListener('input', orderNote);
+$('order-form').addEventListener('input', () => {
+  orderNote();
+  // A filled note stays until the next order or until the player changes the form.
+  const msg = $('order-msg');
+  if (msg.dataset.kind === 'filled') say(msg, '');
+});
 
 $('order-form').addEventListener('submit', async (ev) => {
   ev.preventDefault();
@@ -636,8 +644,8 @@ $('order-form').addEventListener('submit', async (ev) => {
   }
   const r = await run(o.action, msg, [/** @type {HTMLButtonElement} */ ($('place'))]);
   if (!r) return;
-  const traded = (r.events ?? []).filter((e) => e.kind === 'trade').length;
-  say(msg, `Order ${orderId(r.txid)} placed${traded ? `; it traded ${traded} time${traded === 1 ? '' : 's'}` : ''}.`, 'ok');
+  const p = placedText(r, fmt());
+  say(msg, p.text, p.traded ? 'filled' : 'ok');
 });
 
 $('join').addEventListener('click', async (ev) => {

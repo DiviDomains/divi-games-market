@@ -4,7 +4,10 @@
 
 /** Prices are quote base units per whole base token, times 10^8 (`PRICE_SCALE` in crates/dg-market). */
 export const PRICE_SCALE = 100_000_000n;
-/** The most decimal places a typed price may have, as `parse_price` in bots/rust/src/strategy.rs. */
+/**
+ * The wire scale as decimal places: PRICE_SCALE is 10^PRICE_DECIMALS. A price's tick on the chain is one wire unit,
+ * 10^-(PRICE_DECIMALS + quote decimals) whole quote tokens, so a price is shown and typed to that many places.
+ */
 export const PRICE_DECIMALS = 8;
 export const MAX_PRICE = 18446744073709551615n;
 /** Season tokens: S<n>GOLD has 2 decimals, S<n>DIVI 8, unless /v1/tokens says otherwise. */
@@ -70,11 +73,13 @@ export function toUnits(text, decimals, what = 'amount') {
 
 /**
  * A price in whole quote tokens per whole base token to the wire price: priceToWire("1.25", 2) === 12500000000n
- * (1.25 S<n>GOLD is 125 base units, times 10^8). The same as `reference_price` in bots/rust/src/strategy.rs.
+ * (1.25 S<n>GOLD is 125 base units, times 10^8). The same as `reference_price` in bots/rust/src/strategy.rs, except
+ * that it takes up to the chain's tick, PRICE_DECIMALS + quote decimals places (the bots take 8), so any price
+ * priceText shows reads back to the same wire price: priceToWire("1.0752823095", 2) === 10752823095n.
  * @param {string} text @param {number} [quoteDecimals]
  */
 export function priceToWire(text, quoteDecimals = GOLD_DECIMALS) {
-  const p = toUnits(text, PRICE_DECIMALS, 'price') * 10n ** BigInt(quoteDecimals);
+  const p = toUnits(text, PRICE_DECIMALS + quoteDecimals, 'price');
   if (p < 1n) throw new Error('The price must be more than zero.');
   if (p > MAX_PRICE) throw new Error('That price is too high for the chain.');
   return p;

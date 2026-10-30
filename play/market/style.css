@@ -11,6 +11,8 @@
 .alert-opt input { width: auto; margin: 0; }
 .alert-opt .note { margin: 4px 0 0; font-size: 0.8rem; }
 .fills h3 { margin-top: 12px; }
+/* An order's note that it traded stays up (app.js `say`), styled as a success. */
+.msg[data-kind="filled"] { background: var(--ok-bg); color: var(--ok-text); border-color: rgba(34, 197, 94, 0.3); }
 .fill-list { margin: 0; padding-left: 20px; color: var(--text-2); font-size: 0.875rem; line-height: 1.5; overflow-wrap: anywhere; }
 
 .order-form { display: grid; grid-template-columns: auto 1fr 1fr auto; gap: 10px; align-items: end; }
@@ -39,6 +41,18 @@
 .lvl.bid td:first-child { color: var(--ok-text); }
 .lvl.ask td:first-child { color: var(--err-text); }
 .trades tr.you td { background: var(--accent-soft); }
+/* A phone: tighter cells, and in Recent trades each row is a grid of the four number columns with the who column
+   ("yHVy9m…hTTa ← y1EFth…EobA", "you took") on a second line under them, so every fact shows and nothing scrolls. */
+@media (max-width: 520px) {
+  .book table, table.trades { font-size: 0.8rem; }
+  .book th, .book td { padding: 4px 3px; }
+  table.trades, .trades thead, .trades tbody { display: block; }
+  .trades tr { display: grid; grid-template-columns: 4.2em 2.8em minmax(0, 1fr) minmax(0, 1fr); }
+  .trades th, .trades td { padding: 4px 3px; overflow-wrap: anywhere; }
+  .trades th:last-child { display: none; }
+  .trades td.who, .trades td[colspan] { grid-column: 1 / -1; }
+  .trades td.who { border-top: 0; padding-top: 0; }
+}
 
 details.rules summary { cursor: pointer; font-weight: 600; color: var(--text); }
 details.rules ul { margin: 8px 0 0; padding-left: 20px; color: var(--muted); line-height: 1.5; }

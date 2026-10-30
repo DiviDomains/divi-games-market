@@ -1,12 +1,12 @@
 // Where the player stands in the season, and which of their resting orders filled: the market page's "Your standing"
 // line, its fills list, its tab title and the "Tell me when an order fills" notification. Pure functions, no DOM, so
-// tests/sdk/market-standing.test.mjs can run them.
+// tests/sdk/market-standing.test.mjs can run them. Also what the order form says once an order is in a block.
 //
 // Value is the chain's rule (`season_view` in crates/dg-market/src/market.rs): GOLD plus DIVI marked at the last trade
 // price, open orders in the pair included. Fills are read from the trades the page already fetches: a trade whose
 // maker is this address is one of its resting orders filling. A cancel leaves no trade, so it is never a fill.
 
-import { notional, unitsText, priceText, DIVI_DECIMALS } from './market.js';
+import { notional, unitsText, priceText, DIVI_DECIMALS, PRICE_SCALE } from './market.js';
 
 export { notifyPlan } from '../notify.js';
 
@@ -168,4 +168,47 @@ export function fillText(x, { base, quote, goldDecimals, diviDecimals }) {
 export function shouldNotify(prev, fills) {
   if (!prev) return false;
   return fills.some((f) => f.seq > prev.seq);
+}
+
+// ---------- the order just placed ----------
+
+/** The most trades one order may make in a block: `MAX_FILLS` in crates/dg-market/src/market.rs. */
+const MAX_FILLS = 50;
+const WHY_CLOSED = /** @type {Record<string, string>} */ ({ fill_limit: `one order trades at most ${MAX_FILLS} times`, dust: 'too little was left to price' });
+
+/**
+ * What the order form says once a place is in a block, from its receipt `r`: filled, partly filled with the rest on
+ * the book (or returned), or placed and resting. The chain names its events after the module (`market.trade`,
+ * crates/dg-chain/src/exec.rs `emit`); the bare kind is read too. Only this order's events count: the receipt also
+ * closes the resting orders it took.
+ * @param {{txid: string, events?: {kind: string, data: any}[]}} r
+ * @param {{base: string, quote: string, goldDecimals: number, diviDecimals: number}} f
+ * @returns {{text: string, traded: boolean, full: boolean}}
+ */
+export function placedText(r, { base, quote, goldDecimals, diviDecimals }) {
+  const id = String(r?.txid ?? '').slice(0, 16);
+  const events = Array.isArray(r?.events) ? r.events : [];
+  const of = (/** @type {string} */ kind) => events.filter((e) => (e?.kind === `market.${kind}` || e?.kind === kind) && e.data);
+  const placed = of('order_placed').find((e) => e.data.id === id)?.data;
+  const trades = of('trade').map((e) => e.data).filter((t) => t.taker_order == null || t.taker_order === id);
+  const closed = of('order_closed').find((e) => e.data.id === id)?.data;
+  if (!trades.length) return { text: `Order ${id} placed; it rests on the book until it fills or you cancel it.`, traded: false, full: false };
+
+  const d = (/** @type {bigint} */ u) => `${unitsText(u, diviDecimals)} ${base}`;
+  const amount = trades.reduce((s, t) => s + big(t.amount), 0n);
+  const gold = trades.reduce((s, t) => s + big(t.quote_amount), 0n);
+  const prices = new Set(trades.map((t) => String(t.price)));
+  // One price: that price. Several: GOLD paid per whole DIVI, rounded down to the price's own precision.
+  const price = prices.size === 1
+    ? `at ${priceText(String(trades[0].price), goldDecimals)} ${quote}`
+    : `at an average of ${priceText((gold * 10n ** BigInt(diviDecimals) * PRICE_SCALE) / amount, goldDecimals)} ${quote}`;
+  const count = trades.length > 1 ? ` (${trades.length} trades)` : '';
+  const side = placed?.side ?? trades[0].taker_side;
+  const what = `you ${side === 'sell' ? 'sold' : 'bought'} ${d(amount)} ${price}${count}, for ${unitsText(gold, goldDecimals)} ${quote}`;
+  const left = closed ? big(closed.remaining) : placed ? big(placed.amount) - amount : 0n;
+  if (left <= 0n) return { text: `Order ${id} filled: ${what}.`, traded: true, full: true };
+  const rest = closed
+    ? `the other ${d(left)} did not rest (${WHY_CLOSED[closed.reason] ?? closed.reason}), and what it held came back to you`
+    : `the other ${d(left)} rests on the book`;
+  return { text: `Order ${id} partly filled: ${what}; ${rest}.`, traded: true, full: false };
 }

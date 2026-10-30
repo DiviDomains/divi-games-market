@@ -424,24 +424,103 @@ export function tokenDecimals(symbol) {
   return season ? (season[1] === 'GOLD' ? 2 : 8) : undefined;
 }
 
+/** "block time N" as the visitor's local time, and how long until it while it is ahead. */
+function localBlockTimes(/** @type {string} */ text, /** @type {number} */ now) {
+  return text.replace(/block time (\d{12,})/g, (_, ms) => {
+    const left = timeLeft(Number(ms), now);
+    return left === 'now' ? localTime(Number(ms)) : `${localTime(Number(ms))} (in ${left})`;
+  });
+}
+
+const gold = (/** @type {string} */ units) => `${formatAmount(units, 2)} GOLD`;
+
 /**
- * A chain error with any "block time N" turned into the visitor's local time and how long until it, a bet's limits
- * in GOLD rather than base units, and an "insufficient" refusal in whole tokens (left as it is for a token whose
- * decimals `tokenDecimals` doesn't know).
+ * What a player's own op can get back from the chain (the games' and the faucet's refusals), in plain words: each
+ * pattern matches the whole refusal as a page receives it, "rejected: <kind>: …" from the node on submit or
+ * "<kind>: …" in a failed receipt. A "block time N" left in a sentence reads as a local time. The chain's wording
+ * stays the API; this is only what the pages show.
+ * @type {[RegExp, string | ((...m: string[]) => string)][]}
+ */
+const REFUSALS = [
+  // tic-tac-toe
+  [/^(?:rejected: )?not allowed: not your turn$/, 'It is not your turn.'],
+  [/^(?:rejected: )?invalid: cell is taken$/, 'That square is already taken.'],
+  [/^(?:rejected: )?invalid: game is not open$/, 'This table is no longer open: someone else joined it first, or it has ended.'],
+  [/^(?:rejected: )?invalid: game expired after 24 hours open; anyone can cancel it to refund the creator$/, 'This table waited 24 hours with nobody joining, so it has expired; anyone can cancel it, and the stake goes back to its creator.'],
+  [/^(?:rejected: )?invalid: cannot join your own game$/, 'You cannot join your own table.'],
+  [/^(?:rejected: )?not allowed: game is reserved for another player$/, 'This table is reserved for another player.'],
+  [/^(?:rejected: )?conflict: this game's stake is (\d+) base units, not the one you agreed to$/, (s) => `This table's stake is ${gold(s)}, not the stake you agreed to.`],
+  [/^(?:rejected: )?invalid: stake is at most (\d+) base units$/, (s) => `The stake can be at most ${gold(s)}.`],
+  [/^(?:rejected: )?invalid: opponent must be another address$/, 'You cannot invite yourself; pick another player\'s address.'],
+  [/^(?:rejected: )?invalid: game is not in play$/, 'This game is not in play.'],
+  [/^(?:rejected: )?not allowed: not a player in this game$/, 'You are not a player in this game.'],
+  [/^(?:rejected: )?not allowed: only the creator can cancel$/, 'Only the player who made this table can cancel it.'],
+  [/^(?:rejected: )?invalid: only an open game can be cancelled$/, 'Only a table nobody has joined can be cancelled.'],
+  [/^(?:rejected: )?invalid: it is your turn$/, 'It is your turn, so there is no win on time to claim.'],
+  [/^(?:rejected: )?invalid: timeout can be claimed from block time (\d+)$/, (t) => `You can claim the win on time from block time ${t}.`],
+  [/^(?:rejected: )?invalid: timeout can be claimed from height (\d+)$/, (h) => `You can claim the win on time from block ${h}.`],
+  // blackjack ("the hand is over" and the bet's limits in a receipt keep their own rules below)
+  [/^rejected: invalid: bet must be (\d+) to (\d+) base units$/, (lo, hi) => `A bet must be ${formatAmount(lo, 2)} to ${gold(hi)}.`],
+  [/^(?:rejected: )?conflict: you already have an open hand$/, 'You already have a hand in play; finish it first.'],
+  [/^(?:rejected: )?invalid: you can only double on your first two cards$/, 'You can only double down on your first two cards.'],
+  [/^(?:rejected: )?invalid: nothing to hit$/, 'You cannot take another card on 21 or more.'],
+  [/^(?:rejected: )?conflict: the house is busy dealing; try again in a few seconds$/, 'The house is busy dealing; try again in a few seconds.'],
+  [/^(?:rejected: )?conflict: the house revealed a link since you looked; try again$/, 'The house dealt a card since you looked; try again.'],
+  [/^(?:rejected: )?invalid: the hand is waiting for the house$/, 'The house has not dealt that hand yet; wait a moment.'],
+  [/^(?:rejected: )?invalid: the house changed its chain; refund this hand$/, 'The house started a new deck during this hand, so you can only take your bet back.'],
+  [/^(?:rejected: )?invalid: the house still has time to deal this hand$/, 'The house still has time to deal this hand; wait a little longer.'],
+  [/^(?:rejected: )?invalid: the house has not committed a chain yet$/, 'The house is not ready to deal yet; try again in a minute.'],
+  [/^(?:rejected: )?invalid: the house is out of chain links; try again after it commits a new chain$/, 'The house needs a fresh deck before it can deal; try again in a minute.'],
+  [/^(?:rejected: )?invalid: the house bankroll is too low for this bet$/, 'The house cannot cover a bet that big right now; try a smaller one.'],
+  [/^(?:rejected: )?not allowed: not your hand$/, 'That hand belongs to another player.'],
+  // tower defense
+  [/^(?:rejected: )?conflict: run \w+ is still open; submit it or wait for it to expire$/, 'You already have a run in play; finish it or wait for it to expire.'],
+  [/^(?:rejected: )?conflict: run \w+ is already scored$/, 'This run has already been scored.'],
+  [/^(?:rejected: )?invalid: run \w+ expired two hours after it started$/, 'This run expired two hours after it started; start a new one.'],
+  [/^(?:rejected: )?invalid: run \w+ expired (\d+) blocks after it started$/, (n) => `This run expired ${n} blocks after it started; start a new one.`],
+  [/^(?:rejected: )?not allowed: only the player who started a run can submit it$/, 'Only the player who started this run can submit it.'],
+  // the faucet and session keys
+  [/^(?:rejected: )?conflict: faucet cooling down; next claim at (block time \d+|height \d+)$/, (at) => `The faucet is cooling down; you can claim again at ${at.replace('height', 'block')}.`],
+  [/^(?:rejected: )?conflict: your Telegram account has claimed from this faucet with another address; next claim at (block time \d+)$/, (at) => `Your Telegram account has claimed from this faucet with another address; you can claim again at ${at}.`],
+  [/^(?:rejected: )?conflict: (the [A-Z0-9]+ faucet is in fast-drip mode until block time \d+ because many people are claiming; link a Telegram account at \S+ to claim now)$/, (s) => `${s[0].toUpperCase()}${s.slice(1)}.`],
+  [/^(?:rejected: )?conflict: the faucet has made its \d+ claims for this block; try again in a few seconds$/, 'The faucet is busy; try again in a few seconds.'],
+  [/^(?:rejected: )?conflict: the ([A-Z0-9]+) faucet has paid out its \d+ claims for today$/, (sym) => `The ${sym} faucet has paid out all its claims for today; try again tomorrow.`],
+  [/^(?:rejected: )?not allowed: (this session key has staked \S+ of its \S+ GOLD limit; sign in again to start a new session)$/, (s) => `${s[0].toUpperCase()}${s.slice(1)}.`],
+  [/^(?:rejected: )?not allowed: a session key cannot send `\w+`; use your wallet$/, 'Your session key cannot do that; use your wallet.'],
+];
+
+/** The prefixes the chain puts on a refusal: "rejected: " from the node on submit, then the action error's kind. */
+const REFUSAL_PREFIX = /^(?:(?:rejected|invalid|conflict|not allowed|unauthorized|not found|internal): )+/;
+
+/**
+ * A chain error in plain words for a player. A refusal of a player's own op reads as one sentence (`REFUSALS`); any
+ * "block time N" reads as the visitor's local time and how long until it; a bet's limits read in GOLD rather than base
+ * units, and an "insufficient" refusal in whole tokens (left as it is for a token whose decimals `tokenDecimals`
+ * doesn't know). Any other refusal in the chain's prefixed shape reads as a plain fallback sentence that keeps the
+ * chain's reason; text without one of its prefixes passes through.
  * @param {string} message
  * @param {number} [now]
  */
 export function readableError(message, now = Date.now()) {
-  return String(message)
-    .replace(/block time (\d{12,})/g, (_, ms) => {
-      const left = timeLeft(Number(ms), now);
-      return left === 'now' ? localTime(Number(ms)) : `${localTime(Number(ms))} (in ${left})`;
-    })
-    .replace(/bet must be (\d+) to (\d+) base units/, (_, lo, hi) => `bet must be ${formatAmount(lo, 2)} to ${formatAmount(hi, 2)} GOLD`)
-    .replace(/(?:rejected: )?insufficient ([A-Z0-9]+): need (\d+), have (\d+)/, (all, sym, need, have) => {
+  const text = String(message);
+  for (const [pattern, plain] of REFUSALS) {
+    const m = pattern.exec(text);
+    if (m) return localBlockTimes(typeof plain === 'function' ? plain(...m.slice(1)) : plain, now);
+  }
+  const bet = /bet must be (\d+) to (\d+) base units/;
+  const insufficient = /(?:rejected: )?insufficient ([A-Z0-9]+): need (\d+), have (\d+)/;
+  const over = /(?:rejected: )?(?:invalid: )?the hand is over/;
+  const out = localBlockTimes(text, now)
+    .replace(bet, (_, lo, hi) => `bet must be ${formatAmount(lo, 2)} to ${formatAmount(hi, 2)} GOLD`)
+    .replace(insufficient, (all, sym, need, have) => {
       const d = tokenDecimals(sym);
       return d == null ? all : `Not enough ${sym}: this needs ${formatAmount(need, d)} ${sym} and you have ${formatAmount(have, d)} ${sym}`;
-    });
+    })
+    .replace(over, 'That hand is already over.');
+  // What one of those rules read stays as it reads; any other refusal in the chain's shape gets the fallback.
+  if ([bet, insufficient, over].some((r) => r.test(text)) || !REFUSAL_PREFIX.test(out)) return out;
+  const reason = out.replace(REFUSAL_PREFIX, '').replaceAll('`', '').trim();
+  return reason ? `That did not go through (${reason}).` : 'That did not go through.';
 }
 
 /** The page where a player logs in with Telegram and links an address. */
